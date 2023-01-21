@@ -9,27 +9,28 @@ import pickle
 import datetime
 import sys
 
-
-RENDER_TEMPLATE = """
-<img width="200" height="200" src="{}" style="display:inline"/>
-<div style="background-color: rgb({},{},{}); width: 200; height:200; display:inline-block"> </div>
-<br>
-"""
+DEFAULT_TOP = 10
+DEFAULT_BACKUP_FILENAME = 'backup.pickle'
+DEFAULT_INPUT_JSON = 'images_data.json'
+DEFAULT_MAIN_IMAGE_NAME = 'cases/puff.png'
 
 
-def dist(c1, c2):
+def eucldist(c1, c2):
     point1 = np.array(c1)
     point2 = np.array(c2)
     euclidean_distance = np.linalg.norm(point1 - point2)
     return euclidean_distance
 
 
-def analyze_image(main_image_name, images_folder, top, backup_filename=None):
+def analyze_image(main_image_name, input_json, top, backup_filename=None):
     print('Input data:')
     print('main_image_name:', main_image_name)
-    print('images_folder:', images_folder)
+    print('input_json:', input_json)
     print('top:', top)
     print('backup_filename:', backup_filename)
+
+    with open(input_json, 'r', encoding='utf-8') as f:
+        images_data = json.loads(f.read())[:300]
 
     color_thief = ColorThief(main_image_name)
     main_dominant_color = color_thief.get_color(quality=1)
@@ -40,69 +41,77 @@ def analyze_image(main_image_name, images_folder, top, backup_filename=None):
     else:
         image_by_color = dict()
 
-        for i, image_path in enumerate(os.listdir(images_folder)):
+        images_data_len = len(images_data)
+        for i, image_data in enumerate(images_data):
             try:
-                image_path = os.path.join(images_folder, image_path)
-                color_thief = ColorThief(image_path)
+                color_thief = ColorThief(image_data['image_filename'])
                 dominant_color = color_thief.get_color(quality=1)
+
+                # # backup structure:
+                #
+                # image_by_color = {
+                #     (R,G,B): [
+                #         {
+                #             "name": "Name | Property",
+                #             "image_url": "https://...",
+                #             "image_filename": "path/to/image.png"
+                #             # "distance": 0.5 - will be added down below
+                #         },
+                #         ...
+                #     ],
+                #     ...
+                # }
+                # # #
+
                 image_by_color[dominant_color] = image_by_color.get(
                     dominant_color, []
-                ) + [image_path]
+                ) + [image_data]
+
             except Exception as e:
                 print(e)
 
             if i % 100 == 0:
-                print(i, 'images processed')
+                print('{}/{} images processed'.format(i, images_data_len))
 
-        if backup_filename:
-            with open(backup_filename, 'wb') as f:
-                pickle.dump(image_by_color, f)
+            if backup_filename:
+                with open(backup_filename, 'wb') as f:
+                    pickle.dump(image_by_color, f)
 
     keys = list(image_by_color.keys())
-    keys = sorted(keys, key=lambda x: dist(x, main_dominant_color))
 
-    html = '<html><body>' + \
-        RENDER_TEMPLATE.format(main_image_name, *main_dominant_color)
+    # keys = sorted(keys, key=lambda x: dist(x, main_dominant_color))
+    for key in keys:
+        distance = eucldist(key, main_dominant_color)
+        for img_data in image_by_color[key]:
+            img_data['distance'] = distance
 
-    for key in keys[:top]:
-        # print(key, image_by_color[str(key)], dist(key, main_dominant_color))
-        for image_path in image_by_color[key]:
-            html += RENDER_TEMPLATE.format(
-                image_path, *key
-            )
-            break  # show only one image per color
+    keys = sorted(keys, key=lambda x: image_by_color[x][0]['distance'])
 
-    result_name = 'result_{}_top_{}_{}.html'.format(
-        main_image_name.split('/')[-1],
-        top,
-        datetime.datetime.utcnow().strftime('%Y-%m-%d_%H-%M-%S')
-    )
-    html += '</body></html>'
-    with open(result_name, 'w') as f:
-        f.write(html)
+    keys = keys[:top]  # cut top for performance
+    results = [image_by_color[key] for key in keys]
 
-    print('-' * 20)
-    print(result_name, 'saved')
-    print('-' * 20)
+    # flatten results:
+    results = [item for sublist in results for item in sublist]
+    return results[:top]
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         '--main_image_name', type=str,
-        default='cases/puff.png'
+        default=DEFAULT_MAIN_IMAGE_NAME
     )
     parser.add_argument(
-        '--images_folder', type=str,
-        default='images'
+        '--input_json', type=str,
+        default=DEFAULT_INPUT_JSON
     )  # images_full
     parser.add_argument(
         '--top', type=int,
-        default=10
+        default=DEFAULT_TOP
     )
     parser.add_argument(
         '--backup_filename', type=str,
-        default='image_by_color.pickle'
+        default=DEFAULT_BACKUP_FILENAME
     )
     args = parser.parse_args()
     return args
@@ -110,9 +119,7 @@ def parse_args():
 
 if __name__ == '__main__':
 
-    args = parse_args()
-
-    # testing:
+    # # # Testing:
     # for image_num in [103, 1003, 4003, 5004]:
     #     analyze_image(
     #         'images_full/{}.png'.format(image_num),
@@ -121,10 +128,14 @@ if __name__ == '__main__':
     #         backup_filename='test.pickle'
     #     )
     # sys.exit(0)
+    # # #
 
-    analyze_image(
+    args = parse_args()
+    result = analyze_image(
         main_image_name=args.main_image_name,
-        images_folder=args.images_folder,
+        input_json=args.input_json,
         top=args.top,
         backup_filename=args.backup_filename
     )
+
+    print(json.dumps(result, indent=2))
