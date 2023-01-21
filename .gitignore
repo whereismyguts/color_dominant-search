@@ -1,0 +1,11 @@
+prod
+images
+images_full
+*.pyc
+*.pyo
+*.pyd
+*.so
+cases
+*.json
+*.html
+__pycache__/
